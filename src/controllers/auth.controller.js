@@ -207,3 +207,95 @@ export async function logout(req, res) {
     });
   }
 }
+
+export async function logoutAll(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    return res.status(401).json({
+      message: "Unauthorized. No refresh token provided.",
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+
+    await Session.updateMany(
+      { userId: decoded.id, revoked: false },
+      { revoked: true },
+    );
+
+    res.clearCookie("refreshToken");
+
+    res.status(200).json({
+      message: "User logged out from all sessions successfully.",
+    });
+  } catch (error) {
+    res.status(401).json({
+      message: "Invalid refresh token.",
+    });
+  }
+}
+
+export async function login(req, res) {
+  const { email, password } = req.body;
+
+  const user = await UserModel.findOne({ email });
+
+  if (!user) {
+    return res.status(401).json({
+      message: "Invalid credentials.",
+    });
+  }
+
+  const hashedPassword = crypto
+    .createHash("sha256")
+    .update(password)
+    .digest("hex");
+
+  if (hashedPassword !== user.password) {
+    return res.status(401).json({
+      message: "Invalid credentials.",
+    });
+  }
+
+  const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+  const refreshTokenHash = crypto
+    .createHash("sha256")
+    .update(refreshToken)
+    .digest("hex");
+
+  const session = await Session.create({
+    userId: user._id,
+    refreshTokenHash,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"] || "Unknown",
+  });
+
+  const accessToken = jwt.sign(
+    { id: user._id, sessionId: session._id },
+    config.JWT_SECRET,
+    {
+      expiresIn: "15m",
+    },
+  );
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true, // Prevents JavaScript access to the cookie
+    secure: true, // Ensures the cookie is sent only over HTTPS
+    sameSite: "strict", // Prevents the cookie from being sent with cross-site requests
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+
+  res.status(200).json({
+    message: "User logged in successfully.",
+    user: {
+      username: user.username,
+      email: user.email,
+    },
+    accessToken,
+  });
+}
