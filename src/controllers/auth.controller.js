@@ -27,8 +27,18 @@ export async function register(req, res) {
     password: hashedPassword,
   });
 
-  const token = jwt.sign({ id: user._id }, config.JWT_SECRET, {
-    expiresIn: "1d",
+  const accessToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+    expiresIn: "15m",
+  });
+  const refreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+    expiresIn: "7d",
+  });
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true, // Prevents JavaScript access to the cookie
+    secure: true, // Ensures the cookie is sent only over HTTPS
+    sameSite: "strict", // Prevents the cookie from being sent with cross-site requests
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 
   res.status(201).json({
@@ -36,8 +46,8 @@ export async function register(req, res) {
     user: {
       username: user.username,
       email: user.email,
-      token: token,
     },
+    accessToken,
   });
 }
 
@@ -67,4 +77,50 @@ export async function getMe(req, res) {
       email: user.email,
     },
   });
+}
+
+export async function refreshToken(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    return res.status(401).json({
+      message: "Unauthorized. No refresh token provided.",
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
+
+    const user = await UserModel.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found.",
+      });
+    }
+
+    const newAccessToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+      expiresIn: "15m",
+    });
+
+    const newRefreshToken = jwt.sign({ id: user._id }, config.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true, // Prevents JavaScript access to the cookie
+      secure: true, // Ensures the cookie is sent only over HTTPS
+      sameSite: "strict", // Prevents the cookie from being sent with cross-site requests
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    res.status(200).json({
+      message: "Access token refreshed successfully.",
+      accessToken: newAccessToken,
+    });
+  } catch (error) {
+    res.status(401).json({
+      message: "Invalid refresh token.",
+    });
+  }
 }
