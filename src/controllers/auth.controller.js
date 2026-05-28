@@ -109,6 +109,22 @@ export async function refreshToken(req, res) {
   try {
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET);
 
+    const refreshTokenHash = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
+
+    const session = await Session.findOne({
+      refreshTokenHash,
+      revoked: false,
+    });
+
+    if (!session) {
+      return res.status(401).json({
+        message: "Invalid refresh token.",
+      });
+    }
+
     const user = await UserModel.findById(decoded.id);
 
     if (!user) {
@@ -125,6 +141,14 @@ export async function refreshToken(req, res) {
       expiresIn: "7d",
     });
 
+    const newRefreshTokenHash = crypto
+      .createHash("sha256")
+      .update(newRefreshToken)
+      .digest("hex");
+
+    session.refreshTokenHash = newRefreshTokenHash;
+    await session.save();
+
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true, // Prevents JavaScript access to the cookie
       secure: true, // Ensures the cookie is sent only over HTTPS
@@ -135,6 +159,47 @@ export async function refreshToken(req, res) {
     res.status(200).json({
       message: "Access token refreshed successfully.",
       accessToken: newAccessToken,
+    });
+  } catch (error) {
+    res.status(401).json({
+      message: "Invalid refresh token.",
+    });
+  }
+}
+
+export async function logout(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (!refreshToken) {
+    return res.status(401).json({
+      message: "Unauthorized. No refresh token provided.",
+    });
+  }
+
+  try {
+    const refreshTokenHash = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
+
+    const session = await Session.findOne({
+      refreshTokenHash,
+      revoked: false,
+    });
+
+    if (!session) {
+      return res.status(404).json({
+        message: "Session not found.",
+      });
+    }
+
+    session.revoked = true;
+    await session.save();
+
+    res.clearCookie("refreshToken");
+
+    res.status(200).json({
+      message: "User logged out successfully.",
     });
   } catch (error) {
     res.status(401).json({
